@@ -22,13 +22,12 @@ public class SecurityConfig {
 
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
-        http.csrf(csrf -> csrf
-                        .ignoringRequestMatchers("/api/auth/**") // Explicitly ignore CSRF for /api/auth/**
-                )
+        http.csrf(AbstractHttpConfigurer::disable) // ✅ disable CSRF for REST API
                 .formLogin(AbstractHttpConfigurer::disable) // ← add this
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers(HttpMethod.POST, "/api/auth/login").permitAll()
                         .requestMatchers("/api/auth/**").permitAll()
+                        .requestMatchers("/ws/**").permitAll()        // ✅ ALLOW WebSocket handshake
+                        .requestMatchers("/api/contacts/**").authenticated()
                         .anyRequest().authenticated()
                 )
                 .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);

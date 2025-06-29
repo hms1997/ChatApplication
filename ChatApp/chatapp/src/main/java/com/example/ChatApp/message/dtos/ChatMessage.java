@@ -1,0 +1,18 @@
+package com.example.ChatApp.message.dtos;
+
+import lombok.AllArgsConstructor;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
+import java.time.Instant;
+import java.time.LocalDateTime;
+
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
+public class ChatMessage {
+    private String senderId;
+    private String receiverId;
+    private String content;
+    private LocalDateTime timestamp = LocalDateTime.now();
+}
