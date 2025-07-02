@@ -1,8 +1,16 @@
 package com.example.ChatApp.entities;
 
 import jakarta.persistence.*;
+import lombok.AllArgsConstructor;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+import lombok.Setter;
 
 @Entity
+@Getter
+@Setter
+@NoArgsConstructor
+@AllArgsConstructor
 @Table(name = "message_statuses")
 public class MessageStatus {
 
@@ -12,24 +20,5 @@ public class MessageStatus {
 
     @Column(unique = true, nullable = false)
     private String name; // SENT, DELIVERED, READ
-
-    // Getters, setters, constructors
-
-
-    public Long getId() {
-        return id;
-    }
-
-    public void setId(Long id) {
-        this.id = id;
-    }
-
-    public String getName() {
-        return name;
-    }
-
-    public void setName(String name) {
-        this.name = name;
-    }
 }
 

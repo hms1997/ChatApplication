@@ -2,7 +2,7 @@ package com.example.ChatApp.entities;
 
 
 import jakarta.persistence.*;
-import org.hibernate.annotations.GenericGenerator;
+import lombok.*;
 import org.hibernate.annotations.UpdateTimestamp;
 
 import java.time.LocalDateTime;
@@ -10,18 +10,22 @@ import java.time.LocalDateTime;
 @Table(name = "conversations", uniqueConstraints = {
         @UniqueConstraint(columnNames = {"user1_id", "user2_id"})
 })
+@Getter
+@Setter
+@NoArgsConstructor
+@AllArgsConstructor
+@Builder
 public class Conversation {
 
     @Id
-    @GeneratedValue(generator = "uuid")
-    @GenericGenerator(name = "uuid", strategy = "uuid2")
-    private String id;
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
 
-    @ManyToOne
+    @ManyToOne(optional = false)
     @JoinColumn(name = "user1_id")
     private User user1;
 
-    @ManyToOne
+    @ManyToOne(optional = false)
     @JoinColumn(name = "user2_id")
     private User user2;
 
@@ -30,49 +34,6 @@ public class Conversation {
     private Message lastMessage;
 
     @UpdateTimestamp
-    private LocalDateTime updatedAt;
-
-    // Getters, setters, constructors
-
-
-    public String getId() {
-        return id;
-    }
-
-    public void setId(String id) {
-        this.id = id;
-    }
-
-    public User getUser1() {
-        return user1;
-    }
-
-    public void setUser1(User user1) {
-        this.user1 = user1;
-    }
-
-    public User getUser2() {
-        return user2;
-    }
-
-    public void setUser2(User user2) {
-        this.user2 = user2;
-    }
-
-    public Message getLastMessage() {
-        return lastMessage;
-    }
-
-    public void setLastMessage(Message lastMessage) {
-        this.lastMessage = lastMessage;
-    }
-
-    public LocalDateTime getUpdatedAt() {
-        return updatedAt;
-    }
-
-    public void setUpdatedAt(LocalDateTime updatedAt) {
-        this.updatedAt = updatedAt;
-    }
+    private LocalDateTime lastUpdatedAt;
 }
 
