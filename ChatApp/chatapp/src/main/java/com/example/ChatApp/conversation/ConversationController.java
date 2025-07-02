@@ -10,6 +10,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.security.Principal;
 import java.util.List;
+import java.util.Objects;
 
 @RestController
 @RequestMapping("/api/conversations")
@@ -21,22 +22,30 @@ public class ConversationController {
 
     @GetMapping
     public List<ConversationDto> getConversations(Principal principal) {
-        String mobileNumber = principal.getName();
-        User currentUser = userRepository.findByMobileNumber(mobileNumber)
-                .orElseThrow(() -> new RuntimeException("User not found"));
+        // ✅ FIX: The principal's name is now the User ID.
+        String currentUserId = principal.getName();
+        User currentUser = userRepository.findById(currentUserId)
+                .orElseThrow(() -> new RuntimeException("User not found for ID: " + currentUserId));
 
         List<Conversation> conversations = conversationService.getConversationsForUser(currentUser);
 
         return conversations.stream().map(conversation -> {
-            User contact = conversation.getUser1().equals(currentUser) ? conversation.getUser2() : conversation.getUser1();
-            return ConversationDto.builder()
-                    .contactId(contact.getId())
-                    .displayName(contact.getDisplayName())
-                    .lastMessage(conversation.getLastMessage().getContent())
-                    .status(conversation.getLastMessage().getStatus().getName())
-                    .timestamp(conversation.getLastUpdatedAt())
-                    .build();
-        }).toList();
+                    // This logic remains correct
+                    User contact = conversation.getUser1().getId().equals(currentUserId) ? conversation.getUser2() : conversation.getUser1();
+
+                    // Safe check for last message
+                    if (conversation.getLastMessage() == null) {
+                        return null; // Or return a DTO with default values
+                    }
+
+                    return ConversationDto.builder()
+                            .contactId(contact.getId())
+                            .displayName(contact.getDisplayName())
+                            .lastMessage(conversation.getLastMessage().getContent())
+                            .status(conversation.getLastMessage().getStatus().getName())
+                            .timestamp(conversation.getLastUpdatedAt())
+                            .build();
+                }).filter(Objects::nonNull) // Filter out any null DTOs
+                .toList();
     }
 }
-

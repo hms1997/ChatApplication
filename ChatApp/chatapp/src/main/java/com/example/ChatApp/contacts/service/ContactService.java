@@ -20,12 +20,11 @@ public class ContactService {
         List<User> users = userRepository.findByMobileNumberIn(mobileNumbers);
 
         return users.stream()
-                .map(user -> new ContactResponse(
-                        user.getId(),
-                        user.getMobileNumber(),
-                        user.getDisplayName()
-                ))
+                .map(user -> ContactResponse.builder()
+                        .userId(user.getId()) // ✅ Explicitly set userId
+                        .mobileNumber(user.getMobileNumber())
+                        .displayName(user.getDisplayName())
+                        .build())
                 .toList();
     }
 }
-

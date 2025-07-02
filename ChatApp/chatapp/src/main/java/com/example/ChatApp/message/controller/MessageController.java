@@ -29,7 +29,10 @@ public class MessageController {
 
     // This handles messages from /app/chat.sendMessage
     @MessageMapping("/chat.sendMessage")
-    public void sendMessage(ChatMessage message) {
+    public void sendMessage(ChatMessage message, Principal principal) { // Added Principal
+        // Set senderId from the authenticated principal to prevent spoofing
+        message.setSenderId(principal.getName());
+
         System.out.println("📩 Received message: " + message);
         messageService.save(message);
         // Forward to receiver’s WebSocket channel
@@ -45,12 +48,11 @@ public class MessageController {
             @RequestParam("userId") String otherUserId,
             Principal principal) {
 
-        String mobile = principal.getName();
-        User currentUser = userRepository.findByMobileNumber(mobile)
-                .orElseThrow(() -> new RuntimeException("User not found"));
+        // ✅ FIX: The principal's name is now the User ID.
+        String currentUserId = principal.getName();
 
         return ResponseEntity.ok(
-                messageService.getMessages(currentUser.getId(), otherUserId)
+                messageService.getMessages(currentUserId, otherUserId)
         );
     }
 }

@@ -1,4 +1,4 @@
-package com.example.ChatApp.contacts.dto;
+package com.example.ChatApp.message.dtos;
 
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -9,8 +9,11 @@ import lombok.NoArgsConstructor;
 @Builder
 @AllArgsConstructor
 @NoArgsConstructor
-public class ContactResponse {
+public class UserStatusDto {
     private String userId;
-    private String mobileNumber;
-    private String displayName;
+    private Status status;
+
+    public enum Status {
+        ONLINE, OFFLINE
+    }
 }
