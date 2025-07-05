@@ -20,5 +20,8 @@ public class MessageStatus {
 
     @Column(unique = true, nullable = false)
     private String name; // SENT, DELIVERED, READ
+    // ✅ Add a field to define the order of statuses
+    @Column(nullable = false)
+    private int statusOrder;
 }
 

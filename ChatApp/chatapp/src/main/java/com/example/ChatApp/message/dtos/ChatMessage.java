@@ -11,6 +11,8 @@ import java.time.LocalDateTime;
 @NoArgsConstructor
 @AllArgsConstructor
 public class ChatMessage {
+    // ✅ FIX: Add the ID field to carry the temporary ID from the client
+    private String id;
     private String senderId;
     private String receiverId;
     private String content;

@@ -16,4 +16,8 @@ public interface MessageRepository extends JpaRepository<Message, String> {
     List<Message> findMessagesBetweenUsers(@Param("user1") String user1Id,
                                            @Param("user2") String user2Id);
 
+    // ✅ ADD THIS NEW METHOD
+    // Find all messages for a user with a specific status
+    List<Message> findByReceiverIdAndStatusName(String receiverId, String statusName);
+
 }
