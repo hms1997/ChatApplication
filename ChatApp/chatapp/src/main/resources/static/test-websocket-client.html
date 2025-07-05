@@ -59,8 +59,8 @@
     #contacts-list li.active {
       background: #d0e0ff;
     }
-    #contacts-list .status {
-      float: right;
+    #contacts-list .contact-status {
+      display: block;
       font-size: 0.8em;
       color: #888;
     }
@@ -138,6 +138,11 @@
         color: #888;
         padding: 0 10px;
     }
+    #chat-subtitle {
+        font-size: 0.8em;
+        color: #888;
+        height: 15px;
+    }
   </style>
 </head>
 <body>
@@ -161,6 +166,7 @@
 
         <div id="right-panel">
             <h3 id="chat-with">Select a contact to chat</h3>
+            <div id="chat-subtitle"></div>
             <div id="chat-area">
                 <div id="load-more-btn" onclick="fetchMessages(true)" style="display: none;">Load More</div>
                 <div id="messages"></div>
@@ -189,11 +195,25 @@
     let typingTimeout = null;
     let currentPage = 0;
     let hasMoreMessages = true;
+    let contactDetailsCache = {};
 
 
     function log(message) {
         document.getElementById('log').innerHTML += `> ${new Date().toLocaleTimeString()}: ${message}\n`;
         document.getElementById('log').scrollTop = document.getElementById('log').scrollHeight;
+    }
+
+    function formatLastSeen(isoString) {
+        if (!isoString) return '';
+        const date = new Date(isoString);
+        const now = new Date();
+        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const yesterday = new Date(today);
+        yesterday.setDate(yesterday.getDate() - 1);
+        const time = date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+        if (date >= today) { return `last seen today at ${time}`; }
+        else if (date >= yesterday) { return `last seen yesterday at ${time}`; }
+        else { return `last seen on ${date.toLocaleDateString()}`; }
     }
 
     function login() {
@@ -204,16 +224,13 @@
             return;
         }
         log(`Attempting login for ${mobile}...`);
-
         fetch('/api/auth/login', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ mobileNumber: mobile, displayName: displayName })
         })
         .then(response => {
-            if (!response.ok) {
-                throw new Error(`Login failed with status: ${response.status}`);
-            }
+            if (!response.ok) throw new Error(`Login failed with status: ${response.status}`);
             return response.json();
         })
         .then(data => {
@@ -236,6 +253,18 @@
         }).catch(err => log(`Message sync error: ${err}`));
     }
 
+    function syncOnlineUsers() {
+        log('Client is ready, fetching online user list.');
+        fetch('/api/users/presence', { headers: { 'Authorization': `Bearer ${token}` }})
+        .then(response => response.json())
+        .then(onlineUserIds => {
+            log(`Received online users: ${onlineUserIds.join(', ')}`);
+            onlineUserIds.forEach(userId => {
+                processPresenceUpdate({ userId: userId, status: 'ONLINE' });
+            });
+        }).catch(err => log(`Presence sync error: ${err}`));
+    }
+
     function connect() {
         const socket = new SockJS('/ws');
         stompClient = Stomp.over(socket);
@@ -245,8 +274,8 @@
         stompClient.connect(headers, (frame) => {
             document.getElementById('status').innerText = 'Status: Connected';
             log('WebSocket Connected!');
-            sendQueuedMessages();
 
+            // Set up all subscriptions first
             stompClient.subscribe(`/user/${currentUserId}/queue/messages`, (message) => {
                 const msgDto = JSON.parse(message.body);
                 log(`Message received from ${msgDto.senderId}`);
@@ -256,12 +285,10 @@
                     sendBulkStatusUpdate([msgDto.id], 'READ', msgDto.senderId);
                 }
             });
-
             stompClient.subscribe(`/user/${currentUserId}/queue/status`, (message) => {
                 const statusUpdate = JSON.parse(message.body);
                 statusUpdate.messageIds.forEach(id => updateMessageStatusTick(id, statusUpdate.status));
             });
-
             stompClient.subscribe(`/user/${currentUserId}/queue/sent-ack`, (message) => {
                 const ack = JSON.parse(message.body);
                 const msgElement = document.getElementById(`msg-${ack.tempId}`);
@@ -272,7 +299,6 @@
                     updateMessageStatusTick(ack.permanentId, 'SENT');
                 }
             });
-
             stompClient.subscribe(`/user/${currentUserId}/queue/typing`, (message) => {
                 const indicator = JSON.parse(message.body);
                 const typingDiv = document.getElementById('typing-indicator');
@@ -280,10 +306,12 @@
                     typingDiv.textContent = indicator.isTyping ? `${indicator.senderName} is typing...` : '';
                 }
             });
-
             stompClient.subscribe('/topic/presence', (message) => processPresenceUpdate(JSON.parse(message.body)));
-            stompClient.subscribe(`/user/${currentUserId}/queue/presence`, (message) => processPresenceUpdate(JSON.parse(message.body)));
+
+            // ✅ Now that subscriptions are ready, sync the initial state
+            sendQueuedMessages();
             syncOfflineMessages();
+            syncOnlineUsers();
 
         }, (error) => {
             log(`Connection error: ${error}`);
@@ -309,20 +337,16 @@
         event.preventDefault();
         const content = document.getElementById('message').value;
         if (!content || !selectedContactId) return;
-
         clearTimeout(typingTimeout);
         sendTypingIndicator(false);
-
         const tempId = `unsent-${Date.now()}`;
         const chatMessage = { id: tempId, senderId: currentUserId, receiverId: selectedContactId, content: content, status: 'UNSENT', timestamp: new Date().toISOString() };
-
         if (stompClient && stompClient.connected) {
             stompClient.send('/app/chat.sendMessage', {}, JSON.stringify(chatMessage));
         } else {
             log('Offline. Queuing message.');
             unsentMessageQueue.push(chatMessage);
         }
-
         displayMessage(chatMessage, 'sent', true);
         document.getElementById('message').value = '';
     }
@@ -333,29 +357,24 @@
         document.querySelectorAll('#contacts-list li').forEach(li => li.classList.remove('active'));
         document.querySelector(`#contacts-list li[data-id='${contactId}']`).classList.add('active');
         document.getElementById('typing-indicator').textContent = '';
-        
+        updateChatSubtitle(contactId);
         currentPage = 0;
         hasMoreMessages = true;
         document.getElementById('messages').innerHTML = '';
-        
         fetchMessages(false);
     }
 
     function fetchMessages(loadMore = false) {
         if (!selectedContactId || (loadMore && !hasMoreMessages)) return;
-
-        if (loadMore) {
-            currentPage++;
-        } else {
+        if (loadMore) { currentPage++; }
+        else {
             currentPage = 0;
             hasMoreMessages = true;
             document.getElementById('messages').innerHTML = '';
         }
-
         log(`Fetching messages for user ${selectedContactId}, page ${currentPage}...`);
         const loadMoreBtn = document.getElementById('load-more-btn');
         loadMoreBtn.textContent = 'Loading...';
-
         fetch(`/api/messages?userId=${selectedContactId}&page=${currentPage}&size=30`, { headers: { 'Authorization': `Bearer ${token}` }})
         .then(response => response.json())
         .then(page => {
@@ -363,11 +382,9 @@
                 const type = msg.senderId === currentUserId ? 'sent' : 'received';
                 displayMessage(msg, type, false);
             });
-
             hasMoreMessages = !page.last;
             loadMoreBtn.style.display = hasMoreMessages ? 'block' : 'none';
             loadMoreBtn.textContent = 'Load More';
-
             if (!loadMore) {
                 const unreadMessageIds = page.content
                     .filter(msg => msg.senderId !== currentUserId && msg.status !== 'READ')
@@ -384,29 +401,74 @@
         const messageEle = document.createElement('div');
         messageEle.className = `message ${type}`;
         messageEle.id = `msg-${msg.id}`;
-
         let statusTickHtml = '';
         if (type === 'sent') {
             statusTickHtml = `<span class="msg-status" id="status-${msg.id}"></span>`;
         }
-
         messageEle.innerHTML = `${msg.content} ${statusTickHtml}`;
-        
         if (isNew) {
             messagesDiv.insertAdjacentElement('afterbegin', messageEle);
         } else {
             messagesDiv.appendChild(messageEle);
         }
-        
         updateMessageStatusTick(msg.id, msg.status);
     }
 
     function updateMessageStatusTick(messageId, status) { const statusEl = document.getElementById(`status-${messageId}`); if (!statusEl) return; let tick = ''; if (status === 'UNSENT') tick = '🕒'; if (status === 'SENT') tick = '✓'; if (status === 'DELIVERED') tick = '✓✓'; if (status === 'READ') tick = '✓✓<span class="tick-read">✓</span>'; statusEl.innerHTML = tick; }
     function sendQueuedMessages() { if (unsentMessageQueue.length === 0) return; log(`Sending ${unsentMessageQueue.length} queued messages...`); unsentMessageQueue.forEach(msg => { stompClient.send('/app/chat.sendMessage', {}, JSON.stringify(msg)); }); unsentMessageQueue = []; }
     function sendBulkStatusUpdate(messageIds, status, senderId) { if (!stompClient || !stompClient.connected || messageIds.length === 0) return; const update = { messageIds, status, senderId }; stompClient.send('/app/chat.updateStatus', {}, JSON.stringify(update)); }
-    function syncContacts() { const numbers = document.getElementById('contact-numbers').value.split('\n').filter(n => n); fetch('/api/contacts/sync', { method: 'POST', headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ contacts: numbers }) }) .then(response => response.json()) .then(contacts => { const list = document.getElementById('contacts-list'); list.innerHTML = ''; contacts.forEach(contact => { const currentStatus = contactStatusCache[contact.userId] || 'OFFLINE'; const statusColor = currentStatus === 'ONLINE' ? 'green' : '#888'; const item = document.createElement('li'); item.dataset.id = contact.userId; item.dataset.name = contact.displayName; item.innerHTML = `${contact.displayName} (${contact.mobileNumber}) <span class="status" id="contact-status-${contact.userId}" style="color: ${statusColor};">${currentStatus}</span>`; item.onclick = () => selectContactToChat(contact.userId, contact.displayName); list.appendChild(item); }); }); }
-    function processPresenceUpdate(statusUpdate) { log(`Presence: User ${statusUpdate.userId} is ${statusUpdate.status}`); contactStatusCache[statusUpdate.userId] = statusUpdate.status; updateContactStatus(statusUpdate.userId, statusUpdate.status); }
-    function updateContactStatus(userId, status) { const statusElement = document.getElementById(`contact-status-${userId}`); if (statusElement) { statusElement.innerText = status; statusElement.style.color = status === 'ONLINE' ? 'green' : '#888'; } }
+
+    function syncContacts() {
+        const numbers = document.getElementById('contact-numbers').value.split('\n').filter(n => n);
+        fetch('/api/contacts/sync', { method: 'POST', headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ contacts: numbers }) })
+        .then(response => response.json())
+        .then(contacts => {
+            contactDetailsCache = {};
+            contacts.forEach(c => contactDetailsCache[c.userId] = c);
+            const list = document.getElementById('contacts-list');
+            list.innerHTML = '';
+            contacts.forEach(contact => {
+                const item = document.createElement('li');
+                item.dataset.id = contact.userId;
+                item.dataset.name = contact.displayName;
+                item.innerHTML = `${contact.displayName} (${contact.mobileNumber})<span class="contact-status" id="contact-status-${contact.userId}"></span>`;
+                item.onclick = () => selectContactToChat(contact.userId, contact.displayName);
+                list.appendChild(item);
+                // After adding the element, immediately try to update its status from cache
+                processPresenceUpdate({ userId: contact.userId, status: contactStatusCache[contact.userId] || 'OFFLINE' });
+            });
+        });
+    }
+
+    function processPresenceUpdate(statusUpdate) {
+        log(`Presence: User ${statusUpdate.userId} is ${statusUpdate.status}`);
+        contactStatusCache[statusUpdate.userId] = statusUpdate.status;
+
+        const contactStatusEl = document.getElementById(`contact-status-${statusUpdate.userId}`);
+        if (contactStatusEl) {
+            const isOnline = statusUpdate.status === 'ONLINE';
+            contactStatusEl.textContent = isOnline ? 'online' : formatLastSeen(contactDetailsCache[statusUpdate.userId]?.lastSeen);
+            contactStatusEl.style.color = isOnline ? 'green' : '#888';
+        }
+
+        if (statusUpdate.userId === selectedContactId) {
+            updateChatSubtitle(statusUpdate.userId);
+        }
+    }
+
+    function updateChatSubtitle(userId) {
+        const subtitle = document.getElementById('chat-subtitle');
+        if (!subtitle || userId !== selectedContactId) return;
+        const isOnline = contactStatusCache[userId] === 'ONLINE';
+        if (isOnline) {
+            subtitle.textContent = 'online';
+            subtitle.style.color = 'green';
+        } else {
+            const contact = contactDetailsCache[userId];
+            subtitle.textContent = contact ? formatLastSeen(contact.lastSeen) : '';
+            subtitle.style.color = '#888';
+        }
+    }
 
     document.addEventListener('DOMContentLoaded', (event) => {
         document.getElementById('login-btn').addEventListener('click', login);

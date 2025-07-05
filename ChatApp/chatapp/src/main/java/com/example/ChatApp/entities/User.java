@@ -30,5 +30,9 @@ public class User {
 
     @CreationTimestamp
     private LocalDateTime createdAt;
+
+    // ✅ Add this field to store the last seen timestamp
+    @Column(name = "last_seen")
+    private LocalDateTime lastSeen;
 }
 

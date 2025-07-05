@@ -24,6 +24,7 @@ public class ContactService {
                         .userId(user.getId()) // ✅ Explicitly set userId
                         .mobileNumber(user.getMobileNumber())
                         .displayName(user.getDisplayName())
+                        .lastSeen(user.getLastSeen())
                         .build())
                 .toList();
     }
