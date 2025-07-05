@@ -20,14 +20,20 @@
       border-bottom: 1px solid #ccc;
     }
 
-    #login-panel, #app-panel {
+    #login-panel {
       padding: 10px;
+    }
+
+    #app-panel {
+      display: none;
+      flex-direction: column;
+      height: calc(100% - 160px); /* Account for log-panel */
+      flex-grow: 1;
     }
 
     #app-container {
       flex: 1;
       display: flex;
-      flex-direction: row;
       overflow: hidden;
     }
 
@@ -45,7 +51,7 @@
       flex-direction: column;
       border-left: 1px solid #ccc;
       padding-left: 10px;
-      overflow: hidden;
+      height: 100%;
     }
 
     #contacts-list {
@@ -76,13 +82,14 @@
     }
 
     #messages {
-      flex-grow: 1;
+      flex: 1;
       overflow-y: auto;
       padding: 10px;
       display: flex;
       flex-direction: column;
       border: 1px solid #ccc;
       margin-bottom: 10px;
+      min-height: 0; /* allow flex child to scroll */
     }
 
     .message {
@@ -130,6 +137,13 @@
       padding: 8px;
     }
 
+    #typing-indicator {
+      height: 20px;
+      font-style: italic;
+      color: #888;
+      padding: 0 10px;
+    }
+
     #log-panel {
       height: 160px;
       background: #333;
@@ -138,6 +152,7 @@
       padding: 10px;
       overflow-y: auto;
       border-top: 2px solid #222;
+      flex-shrink: 0;
     }
   </style>
 </head>
@@ -147,11 +162,11 @@
     <h3>1. Login / Register</h3>
     <input type="text" id="mobile" placeholder="Mobile Number (e.g., 111)" />
     <input type="text" id="name" placeholder="Display Name" />
-    <button onclick="login()">Login & Connect</button>
+    <button id="login-btn">Login & Connect</button>
     <div id="status">Status: Disconnected</div>
 </div>
 
-<div id="app-panel" style="display: none; flex-grow: 1; flex-direction: column; height: 100%;">
+<div id="app-panel">
     <div id="app-container">
         <div id="left-panel">
             <h3>Contacts</h3>
@@ -163,6 +178,7 @@
         <div id="right-panel">
             <h3 id="chat-with">Select a contact to chat</h3>
             <div id="messages"></div>
+            <div id="typing-indicator"></div>
             <form id="message-form" onsubmit="sendMessage(event)">
                 <input type="text" id="message" placeholder="Type a message..." autocomplete="off"/>
                 <button type="submit">Send</button>
@@ -183,6 +199,7 @@
     let selectedContactId = null;
     let contactStatusCache = {};
     let unsentMessageQueue = [];
+    let typingTimeout = null;
 
     function log(message) {
         document.getElementById('log').innerHTML += `> ${new Date().toLocaleTimeString()}: ${message}\n`;
@@ -221,7 +238,6 @@
         }).catch(err => log(`Login error: ${err}`));
     }
 
-    // ✅ NEW FUNCTION TO CALL THE SYNC ENDPOINT
     function syncOfflineMessages() {
         log('Client is ready, telling server to sync messages.');
         fetch('/api/messages/sync', {
@@ -239,11 +255,8 @@
         stompClient.connect(headers, (frame) => {
             document.getElementById('status').innerText = 'Status: Connected';
             log('WebSocket Connected!');
-
-            // First, send any messages that were queued while offline
             sendQueuedMessages();
 
-            // Then, set up all subscriptions
             stompClient.subscribe(`/user/${currentUserId}/queue/messages`, (message) => {
                 const msgDto = JSON.parse(message.body);
                 log(`Message received from ${msgDto.senderId}`);
@@ -256,39 +269,36 @@
 
             stompClient.subscribe(`/user/${currentUserId}/queue/status`, (message) => {
                 const statusUpdate = JSON.parse(message.body);
-                log(`Received status update for ${statusUpdate.messageIds.length} message(s) -> ${statusUpdate.status}`);
-                statusUpdate.messageIds.forEach(id => {
-                    log(`Calling updateMessageStatusTick method`);
-                    updateMessageStatusTick(id, statusUpdate.status);
-                });
+                statusUpdate.messageIds.forEach(id => updateMessageStatusTick(id, statusUpdate.status));
             });
 
-            // ✅ NEW: Subscription for SENT acknowledgement
             stompClient.subscribe(`/user/${currentUserId}/queue/sent-ack`, (message) => {
                 const ack = JSON.parse(message.body);
-                log(`Received sent-ack for tempId ${ack.tempId}, permanentId is ${ack.permanentId}`);
-
-                // Find the message element by its temporary ID
                 const msgElement = document.getElementById(`msg-${ack.tempId}`);
-                if (msgElement) {
-                    // Update the message element's ID to the permanent one
-                    msgElement.id = `msg-${ack.permanentId}`;
-                }
-
-                // Find the status element by its temporary ID
+                if (msgElement) msgElement.id = `msg-${ack.permanentId}`;
                 const statusElement = document.getElementById(`status-${ack.tempId}`);
                 if (statusElement) {
-                    // Update its ID to the permanent one
                     statusElement.id = `status-${ack.permanentId}`;
-                    // Update the tick to SENT (✓)
                     updateMessageStatusTick(ack.permanentId, 'SENT');
+                }
+            });
+
+            stompClient.subscribe(`/user/${currentUserId}/queue/typing`, (message) => {
+                // This code runs when a typing event arrives
+                const indicator = JSON.parse(message.body);
+                log(`typing indicator event received on receiver side`);
+                const typingDiv = document.getElementById('typing-indicator');
+                log(`Received typing indicator: ${indicator.isTyping} from user ${indicator.senderId}`);
+
+                // Only show the indicator if the chat with User A is currently open
+                if (indicator.senderId === selectedContactId) {
+                    log(`Showing  typing indicator on UI`);
+                    typingDiv.textContent = indicator.isTyping ? `${indicator.senderName} is typing...` : '';
                 }
             });
 
             stompClient.subscribe('/topic/presence', (message) => processPresenceUpdate(JSON.parse(message.body)));
             stompClient.subscribe(`/user/${currentUserId}/queue/presence`, (message) => processPresenceUpdate(JSON.parse(message.body)));
-
-            // ✅ FINALLY, AFTER EVERYTHING IS SET UP, CALL THE SYNC ENDPOINT
             syncOfflineMessages();
 
         }, (error) => {
@@ -298,10 +308,39 @@
         });
     }
 
+    function sendTypingIndicator(isTyping) {
+        if (stompClient && stompClient.connected && selectedContactId) {
+            const indicator = {
+                senderId: currentUserId,
+                receiverId: selectedContactId,
+                isTyping: isTyping
+            };
+            log(`Sending typing indicator: ${isTyping} from user ${currentUserId}`);
+            stompClient.send('/app/chat.typing', {}, JSON.stringify(indicator));
+        }
+    }
+
+    function handleTyping() {
+        // 1. Cancel any previous "stop typing" timer that was scheduled.
+        clearTimeout(typingTimeout);
+
+        // 2. Immediately send a "start typing" message to the server.
+        sendTypingIndicator(true);
+
+        // 3. Schedule a "stop typing" message to be sent in 1.5 seconds.
+        //    This will only run if the user pauses for that long.
+        typingTimeout = setTimeout(() => {
+            sendTypingIndicator(false);
+        }, 1500);
+    }
+
     function sendMessage(event) {
         event.preventDefault();
         const content = document.getElementById('message').value;
         if (!content || !selectedContactId) return;
+
+        clearTimeout(typingTimeout);
+        sendTypingIndicator(false);
 
         const tempId = `unsent-${Date.now()}`;
         const chatMessage = {
@@ -315,7 +354,6 @@
 
         if (stompClient && stompClient.connected) {
             stompClient.send('/app/chat.sendMessage', {}, JSON.stringify(chatMessage));
-            chatMessage.status = 'SENT';
         } else {
             log('Offline. Queuing message.');
             unsentMessageQueue.push(chatMessage);
@@ -325,102 +363,27 @@
         document.getElementById('message').value = '';
     }
 
-    function sendQueuedMessages() {
-        if (unsentMessageQueue.length === 0) return;
-        log(`Sending ${unsentMessageQueue.length} queued messages...`);
-
-        unsentMessageQueue.forEach(msg => {
-            stompClient.send('/app/chat.sendMessage', {}, JSON.stringify(msg));
-            updateMessageStatusTick(msg.id, 'SENT');
-        });
-        unsentMessageQueue = [];
+    function selectContactToChat(contactId, displayName) {
+        selectedContactId = contactId;
+        document.getElementById('chat-with').innerText = `Chat with ${displayName}`;
+        document.querySelectorAll('#contacts-list li').forEach(li => li.classList.remove('active'));
+        document.querySelector(`#contacts-list li[data-id='${contactId}']`).classList.add('active');
+        document.getElementById('typing-indicator').textContent = '';
+        fetchMessages(contactId);
     }
 
-    function sendBulkStatusUpdate(messageIds, status, senderId) {
-        if (!stompClient || !stompClient.connected || messageIds.length === 0) return;
-        log(`Sending bulk status update for ${messageIds.length} message(s) to ${status}`);
-        const update = { messageIds, status, senderId };
-        stompClient.send('/app/chat.updateStatus', {}, JSON.stringify(update));
-    }
-
-    function fetchMessages(otherUserId) {
-        fetch(`/api/messages?userId=${otherUserId}`, { headers: { 'Authorization': `Bearer ${token}` }})
-        .then(response => response.json())
-        .then(messages => {
-            document.getElementById('messages').innerHTML = '';
-            const unreadMessageIds = [];
-            messages.forEach(msg => {
-                const type = msg.senderId === currentUserId ? 'sent' : 'received';
-                displayMessage(msg, type);
-                if (type === 'received' && msg.status !== 'READ') {
-                    unreadMessageIds.push(msg.id);
-                }
-            });
-            if (unreadMessageIds.length > 0) {
-                sendBulkStatusUpdate(unreadMessageIds, 'READ', otherUserId);
-            }
-        });
-    }
-
-    function displayMessage(msg, type) {
-        const messagesDiv = document.getElementById('messages');
-        const messageEle = document.createElement('div');
-        messageEle.className = `message ${type}`;
-        messageEle.id = `msg-${msg.id}`;
-
-        let statusTickHtml = '';
-        if (type === 'sent') {
-            statusTickHtml = `<span class="msg-status" id="status-${msg.id}"></span>`;
-        }
-
-        messageEle.innerHTML = `${msg.content} ${statusTickHtml}`;
-        messagesDiv.appendChild(messageEle);
-        updateMessageStatusTick(msg.id, msg.status);
-        messagesDiv.scrollTop = messagesDiv.scrollHeight;
-    }
-
-    function updateMessageStatusTick(messageId, status) {
-        const statusEl = document.getElementById(`status-${messageId}`);
-        if (!statusEl) return;
-
-        let tick = '';
-        if (status === 'UNSENT') tick = '🕒';
-        if (status === 'SENT') tick = '✓';
-        if (status === 'DELIVERED') tick = '✓✓';
-        if (status === 'READ') tick = '✓✓<span class="tick-read">✓</span>';
-
-        statusEl.innerHTML = tick;
-    }
-
-    function syncContacts() {
-        const numbers = document.getElementById('contact-numbers').value.split('\n').filter(n => n);
-        fetch('/api/contacts/sync', {
-            method: 'POST',
-            headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ contacts: numbers })
-        })
-        .then(response => response.json())
-        .then(contacts => {
-            const list = document.getElementById('contacts-list');
-            list.innerHTML = '';
-            contacts.forEach(contact => {
-                const currentStatus = contactStatusCache[contact.userId] || 'OFFLINE';
-                const statusColor = currentStatus === 'ONLINE' ? 'green' : '#888';
-                const item = document.createElement('li');
-                item.dataset.id = contact.userId;
-                item.dataset.name = contact.displayName;
-                item.innerHTML = `${contact.displayName} (${contact.mobileNumber}) <span class="status" id="contact-status-${contact.userId}" style="color: ${statusColor};">${currentStatus}</span>`;
-                item.onclick = () => selectContactToChat(contact.userId, contact.displayName);
-                list.appendChild(item);
-            });
-        });
-    }
-    function selectContactToChat(contactId, displayName) { selectedContactId = contactId; document.getElementById('chat-with').innerText = `Chat with ${displayName}`; document.querySelectorAll('#contacts-list li').forEach(li => li.classList.remove('active')); document.querySelector(`#contacts-list li[data-id='${contactId}']`).classList.add('active'); fetchMessages(contactId); }
+    function sendQueuedMessages() { if (unsentMessageQueue.length === 0) return; log(`Sending ${unsentMessageQueue.length} queued messages...`); unsentMessageQueue.forEach(msg => { stompClient.send('/app/chat.sendMessage', {}, JSON.stringify(msg)); }); unsentMessageQueue = []; }
+    function sendBulkStatusUpdate(messageIds, status, senderId) { if (!stompClient || !stompClient.connected || messageIds.length === 0) return; const update = { messageIds, status, senderId }; stompClient.send('/app/chat.updateStatus', {}, JSON.stringify(update)); }
+    function fetchMessages(otherUserId) { fetch(`/api/messages?userId=${otherUserId}`, { headers: { 'Authorization': `Bearer ${token}` }}) .then(response => response.json()) .then(messages => { document.getElementById('messages').innerHTML = ''; const unreadMessageIds = []; messages.forEach(msg => { const type = msg.senderId === currentUserId ? 'sent' : 'received'; displayMessage(msg, type); if (type === 'received' && msg.status !== 'READ') { unreadMessageIds.push(msg.id); } }); if (unreadMessageIds.length > 0) { sendBulkStatusUpdate(unreadMessageIds, 'READ', otherUserId); } }); }
+    function displayMessage(msg, type) { const messagesDiv = document.getElementById('messages'); const messageEle = document.createElement('div'); messageEle.className = `message ${type}`; messageEle.id = `msg-${msg.id}`; let statusTickHtml = ''; if (type === 'sent') { statusTickHtml = `<span class="msg-status" id="status-${msg.id}"></span>`; } messageEle.innerHTML = `${msg.content} ${statusTickHtml}`; messagesDiv.appendChild(messageEle); updateMessageStatusTick(msg.id, msg.status); messagesDiv.scrollTop = messagesDiv.scrollHeight; }
+    function updateMessageStatusTick(messageId, status) { const statusEl = document.getElementById(`status-${messageId}`); if (!statusEl) return; let tick = ''; if (status === 'UNSENT') tick = '🕒'; if (status === 'SENT') tick = '✓'; if (status === 'DELIVERED') tick = '✓✓'; if (status === 'READ') tick = '✓✓<span class="tick-read">✓</span>'; statusEl.innerHTML = tick; }
+    function syncContacts() { const numbers = document.getElementById('contact-numbers').value.split('\n').filter(n => n); fetch('/api/contacts/sync', { method: 'POST', headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ contacts: numbers }) }) .then(response => response.json()) .then(contacts => { const list = document.getElementById('contacts-list'); list.innerHTML = ''; contacts.forEach(contact => { const currentStatus = contactStatusCache[contact.userId] || 'OFFLINE'; const statusColor = currentStatus === 'ONLINE' ? 'green' : '#888'; const item = document.createElement('li'); item.dataset.id = contact.userId; item.dataset.name = contact.displayName; item.innerHTML = `${contact.displayName} (${contact.mobileNumber}) <span class="status" id="contact-status-${contact.userId}" style="color: ${statusColor};">${currentStatus}</span>`; item.onclick = () => selectContactToChat(contact.userId, contact.displayName); list.appendChild(item); }); }); }
     function processPresenceUpdate(statusUpdate) { log(`Presence: User ${statusUpdate.userId} is ${statusUpdate.status}`); contactStatusCache[statusUpdate.userId] = statusUpdate.status; updateContactStatus(statusUpdate.userId, statusUpdate.status); }
     function updateContactStatus(userId, status) { const statusElement = document.getElementById(`contact-status-${userId}`); if (statusElement) { statusElement.innerText = status; statusElement.style.color = status === 'ONLINE' ? 'green' : '#888'; } }
 
     document.addEventListener('DOMContentLoaded', (event) => {
         document.getElementById('login-btn').addEventListener('click', login);
+        document.getElementById('message').addEventListener('input', handleTyping);
     });
 </script>
 </body>

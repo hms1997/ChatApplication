@@ -1,11 +1,10 @@
 package com.example.ChatApp.message.controller;
 
 import com.example.ChatApp.entities.Message;
-import com.example.ChatApp.message.dtos.BulkMessageStatusUpdateDto;
-import com.example.ChatApp.message.dtos.ChatMessage;
-import com.example.ChatApp.message.dtos.MessageDto;
-import com.example.ChatApp.message.dtos.MessageSentAckDto;
+import com.example.ChatApp.entities.User;
+import com.example.ChatApp.message.dtos.*;
 import com.example.ChatApp.message.service.MessageService;
+import com.example.ChatApp.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
@@ -25,6 +24,31 @@ public class MessageController {
 
     private final SimpMessagingTemplate messagingTemplate;
     private final MessageService messageService;
+    private final UserRepository userRepository;
+
+    // ✅METHOD FOR TYPING INDICATORS
+    @MessageMapping("/chat.typing")
+    public void handleTypingIndicator(@Payload TypingIndicatorDto typingIndicator, Principal principal) {
+        String senderId = principal.getName();
+        if (!typingIndicator.getSenderId().equals(senderId)) {
+            return; // Security check failed
+        }
+
+        // ✅ Find the user to get their display name
+        User sender = userRepository.findById(senderId)
+                .orElseThrow(() -> new RuntimeException("User not found for typing indicator"));
+
+        // ✅ Set the sender's name in the DTO before forwarding
+        typingIndicator.setSenderName(sender.getDisplayName());
+
+        log.info("Forwarding typing indicator: {}", typingIndicator);
+
+        messagingTemplate.convertAndSendToUser(
+                typingIndicator.getReceiverId(),
+                "/queue/typing",
+                typingIndicator
+        );
+    }
 
     // ✅ ADD THIS NEW ENDPOINT
     @PostMapping("/sync")
