@@ -7,6 +7,9 @@ import com.example.ChatApp.message.service.MessageService;
 import com.example.ChatApp.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.ResponseEntity;
 import org.springframework.messaging.handler.annotation.MessageMapping;
 import org.springframework.messaging.handler.annotation.Payload;
@@ -104,9 +107,17 @@ public class MessageController {
     }
 
     @GetMapping
-    public ResponseEntity<List<MessageDto>> getMessages(
-            @RequestParam("userId") String otherUserId, Principal principal) {
+    public ResponseEntity<Page<MessageDto>> getMessages(
+            @RequestParam("userId") String otherUserId,
+            @RequestParam(defaultValue = "0") int page, // Default to page 0
+            @RequestParam(defaultValue = "30") int size, // Default to 30 messages per page
+            Principal principal) {
+
         String currentUserId = principal.getName();
-        return ResponseEntity.ok(messageService.getMessages(currentUserId, otherUserId));
+        Pageable pageable = PageRequest.of(page, size);
+
+        return ResponseEntity.ok(
+                messageService.getMessages(currentUserId, otherUserId, pageable)
+        );
     }
 }

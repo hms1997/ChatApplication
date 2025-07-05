@@ -12,6 +12,8 @@ import com.example.ChatApp.message.repository.MessageStatusRepository;
 import com.example.ChatApp.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -71,10 +73,11 @@ public class MessageService {
         }
     }
 
-    public List<MessageDto> getMessages(String currentUserId, String otherUserId) {
-        // ... (this method is unchanged)
-        List<Message> messages = messageRepository.findMessagesBetweenUsers(currentUserId, otherUserId);
-        return messages.stream().map(this::toDto).toList();
+    // ✅ MODIFY THIS METHOD
+    public Page<MessageDto> getMessages(String currentUserId, String otherUserId, Pageable pageable) {
+        Page<Message> messagesPage = messageRepository.findMessagesBetweenUsers(currentUserId, otherUserId, pageable);
+        // Map the Page<Message> to Page<MessageDto>
+        return messagesPage.map(this::toDto);
     }
 
     @Transactional

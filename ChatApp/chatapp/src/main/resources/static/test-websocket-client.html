@@ -14,29 +14,19 @@
       display: flex;
       flex-direction: column;
     }
-
     .panel {
       padding: 10px;
       border-bottom: 1px solid #ccc;
     }
-
-    #login-panel {
+    #login-panel, #app-panel {
       padding: 10px;
     }
-
-    #app-panel {
-      display: none;
-      flex-direction: column;
-      height: calc(100% - 160px); /* Account for log-panel */
-      flex-grow: 1;
-    }
-
     #app-container {
       flex: 1;
       display: flex;
+      flex-direction: row;
       overflow: hidden;
     }
-
     #left-panel {
       width: 30%;
       display: flex;
@@ -44,54 +34,58 @@
       padding-right: 10px;
       overflow-y: auto;
     }
-
     #right-panel {
       width: 70%;
       display: flex;
       flex-direction: column;
       border-left: 1px solid #ccc;
       padding-left: 10px;
-      height: 100%;
+      overflow: hidden;
     }
-
     #contacts-list {
       list-style: none;
       padding: 0;
       overflow-y: auto;
       flex-grow: 1;
     }
-
     #contacts-list li {
       padding: 8px;
       cursor: pointer;
       border-bottom: 1px solid #eee;
     }
-
     #contacts-list li:hover {
       background: #f0f0f0;
     }
-
     #contacts-list li.active {
       background: #d0e0ff;
     }
-
     #contacts-list .status {
       float: right;
       font-size: 0.8em;
       color: #888;
     }
-
+    #chat-area {
+        flex-grow: 1;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        border: 1px solid #ccc;
+        margin-bottom: 10px;
+    }
+    #load-more-btn {
+        padding: 5px;
+        text-align: center;
+        cursor: pointer;
+        background: #f0f0f0;
+        border-bottom: 1px solid #ccc;
+    }
     #messages {
-      flex: 1;
+      flex-grow: 1;
       overflow-y: auto;
       padding: 10px;
       display: flex;
-      flex-direction: column;
-      border: 1px solid #ccc;
-      margin-bottom: 10px;
-      min-height: 0; /* allow flex child to scroll */
+      flex-direction: column-reverse;
     }
-
     .message {
       padding: 5px 10px;
       margin-bottom: 5px;
@@ -99,18 +93,15 @@
       max-width: 70%;
       word-wrap: break-word;
     }
-
     .sent {
       background: #dcf8c6;
       align-self: flex-end;
     }
-
     .received {
       background: #fff;
       align-self: flex-start;
       border: 1px solid #eee;
     }
-
     .msg-status {
       font-size: 0.7em;
       color: gray;
@@ -118,32 +109,20 @@
       display: block;
       margin-top: 2px;
     }
-
     .tick-read {
       color: #4fc3f7 !important;
     }
-
     #message-form {
       display: flex;
     }
-
     #message-form input {
       flex-grow: 1;
       padding: 8px;
       margin-right: 5px;
     }
-
     #message-form button {
       padding: 8px;
     }
-
-    #typing-indicator {
-      height: 20px;
-      font-style: italic;
-      color: #888;
-      padding: 0 10px;
-    }
-
     #log-panel {
       height: 160px;
       background: #333;
@@ -152,7 +131,12 @@
       padding: 10px;
       overflow-y: auto;
       border-top: 2px solid #222;
-      flex-shrink: 0;
+    }
+    #typing-indicator {
+        height: 20px;
+        font-style: italic;
+        color: #888;
+        padding: 0 10px;
     }
   </style>
 </head>
@@ -166,7 +150,7 @@
     <div id="status">Status: Disconnected</div>
 </div>
 
-<div id="app-panel">
+<div id="app-panel" style="display: none; flex-grow: 1; flex-direction: column; height: 100%;">
     <div id="app-container">
         <div id="left-panel">
             <h3>Contacts</h3>
@@ -177,7 +161,10 @@
 
         <div id="right-panel">
             <h3 id="chat-with">Select a contact to chat</h3>
-            <div id="messages"></div>
+            <div id="chat-area">
+                <div id="load-more-btn" onclick="fetchMessages(true)" style="display: none;">Load More</div>
+                <div id="messages"></div>
+            </div>
             <div id="typing-indicator"></div>
             <form id="message-form" onsubmit="sendMessage(event)">
                 <input type="text" id="message" placeholder="Type a message..." autocomplete="off"/>
@@ -200,6 +187,9 @@
     let contactStatusCache = {};
     let unsentMessageQueue = [];
     let typingTimeout = null;
+    let currentPage = 0;
+    let hasMoreMessages = true;
+
 
     function log(message) {
         document.getElementById('log').innerHTML += `> ${new Date().toLocaleTimeString()}: ${message}\n`;
@@ -262,7 +252,7 @@
                 log(`Message received from ${msgDto.senderId}`);
                 sendBulkStatusUpdate([msgDto.id], 'DELIVERED', msgDto.senderId);
                 if (msgDto.senderId === selectedContactId) {
-                    displayMessage(msgDto, 'received');
+                    displayMessage(msgDto, 'received', true);
                     sendBulkStatusUpdate([msgDto.id], 'READ', msgDto.senderId);
                 }
             });
@@ -284,15 +274,9 @@
             });
 
             stompClient.subscribe(`/user/${currentUserId}/queue/typing`, (message) => {
-                // This code runs when a typing event arrives
                 const indicator = JSON.parse(message.body);
-                log(`typing indicator event received on receiver side`);
                 const typingDiv = document.getElementById('typing-indicator');
-                log(`Received typing indicator: ${indicator.isTyping} from user ${indicator.senderId}`);
-
-                // Only show the indicator if the chat with User A is currently open
                 if (indicator.senderId === selectedContactId) {
-                    log(`Showing  typing indicator on UI`);
                     typingDiv.textContent = indicator.isTyping ? `${indicator.senderName} is typing...` : '';
                 }
             });
@@ -310,28 +294,15 @@
 
     function sendTypingIndicator(isTyping) {
         if (stompClient && stompClient.connected && selectedContactId) {
-            const indicator = {
-                senderId: currentUserId,
-                receiverId: selectedContactId,
-                isTyping: isTyping
-            };
-            log(`Sending typing indicator: ${isTyping} from user ${currentUserId}`);
+            const indicator = { senderId: currentUserId, receiverId: selectedContactId, isTyping: isTyping };
             stompClient.send('/app/chat.typing', {}, JSON.stringify(indicator));
         }
     }
 
     function handleTyping() {
-        // 1. Cancel any previous "stop typing" timer that was scheduled.
         clearTimeout(typingTimeout);
-
-        // 2. Immediately send a "start typing" message to the server.
         sendTypingIndicator(true);
-
-        // 3. Schedule a "stop typing" message to be sent in 1.5 seconds.
-        //    This will only run if the user pauses for that long.
-        typingTimeout = setTimeout(() => {
-            sendTypingIndicator(false);
-        }, 1500);
+        typingTimeout = setTimeout(() => { sendTypingIndicator(false); }, 1500);
     }
 
     function sendMessage(event) {
@@ -343,14 +314,7 @@
         sendTypingIndicator(false);
 
         const tempId = `unsent-${Date.now()}`;
-        const chatMessage = {
-            id: tempId,
-            senderId: currentUserId,
-            receiverId: selectedContactId,
-            content: content,
-            status: 'UNSENT',
-            timestamp: new Date().toISOString()
-        };
+        const chatMessage = { id: tempId, senderId: currentUserId, receiverId: selectedContactId, content: content, status: 'UNSENT', timestamp: new Date().toISOString() };
 
         if (stompClient && stompClient.connected) {
             stompClient.send('/app/chat.sendMessage', {}, JSON.stringify(chatMessage));
@@ -359,7 +323,7 @@
             unsentMessageQueue.push(chatMessage);
         }
 
-        displayMessage(chatMessage, 'sent');
+        displayMessage(chatMessage, 'sent', true);
         document.getElementById('message').value = '';
     }
 
@@ -369,14 +333,77 @@
         document.querySelectorAll('#contacts-list li').forEach(li => li.classList.remove('active'));
         document.querySelector(`#contacts-list li[data-id='${contactId}']`).classList.add('active');
         document.getElementById('typing-indicator').textContent = '';
-        fetchMessages(contactId);
+        
+        currentPage = 0;
+        hasMoreMessages = true;
+        document.getElementById('messages').innerHTML = '';
+        
+        fetchMessages(false);
     }
 
+    function fetchMessages(loadMore = false) {
+        if (!selectedContactId || (loadMore && !hasMoreMessages)) return;
+
+        if (loadMore) {
+            currentPage++;
+        } else {
+            currentPage = 0;
+            hasMoreMessages = true;
+            document.getElementById('messages').innerHTML = '';
+        }
+
+        log(`Fetching messages for user ${selectedContactId}, page ${currentPage}...`);
+        const loadMoreBtn = document.getElementById('load-more-btn');
+        loadMoreBtn.textContent = 'Loading...';
+
+        fetch(`/api/messages?userId=${selectedContactId}&page=${currentPage}&size=30`, { headers: { 'Authorization': `Bearer ${token}` }})
+        .then(response => response.json())
+        .then(page => {
+            page.content.forEach(msg => {
+                const type = msg.senderId === currentUserId ? 'sent' : 'received';
+                displayMessage(msg, type, false);
+            });
+
+            hasMoreMessages = !page.last;
+            loadMoreBtn.style.display = hasMoreMessages ? 'block' : 'none';
+            loadMoreBtn.textContent = 'Load More';
+
+            if (!loadMore) {
+                const unreadMessageIds = page.content
+                    .filter(msg => msg.senderId !== currentUserId && msg.status !== 'READ')
+                    .map(msg => msg.id);
+                if (unreadMessageIds.length > 0) {
+                    sendBulkStatusUpdate(unreadMessageIds, 'READ', selectedContactId);
+                }
+            }
+        });
+    }
+
+    function displayMessage(msg, type, isNew) {
+        const messagesDiv = document.getElementById('messages');
+        const messageEle = document.createElement('div');
+        messageEle.className = `message ${type}`;
+        messageEle.id = `msg-${msg.id}`;
+
+        let statusTickHtml = '';
+        if (type === 'sent') {
+            statusTickHtml = `<span class="msg-status" id="status-${msg.id}"></span>`;
+        }
+
+        messageEle.innerHTML = `${msg.content} ${statusTickHtml}`;
+        
+        if (isNew) {
+            messagesDiv.insertAdjacentElement('afterbegin', messageEle);
+        } else {
+            messagesDiv.appendChild(messageEle);
+        }
+        
+        updateMessageStatusTick(msg.id, msg.status);
+    }
+
+    function updateMessageStatusTick(messageId, status) { const statusEl = document.getElementById(`status-${messageId}`); if (!statusEl) return; let tick = ''; if (status === 'UNSENT') tick = '🕒'; if (status === 'SENT') tick = '✓'; if (status === 'DELIVERED') tick = '✓✓'; if (status === 'READ') tick = '✓✓<span class="tick-read">✓</span>'; statusEl.innerHTML = tick; }
     function sendQueuedMessages() { if (unsentMessageQueue.length === 0) return; log(`Sending ${unsentMessageQueue.length} queued messages...`); unsentMessageQueue.forEach(msg => { stompClient.send('/app/chat.sendMessage', {}, JSON.stringify(msg)); }); unsentMessageQueue = []; }
     function sendBulkStatusUpdate(messageIds, status, senderId) { if (!stompClient || !stompClient.connected || messageIds.length === 0) return; const update = { messageIds, status, senderId }; stompClient.send('/app/chat.updateStatus', {}, JSON.stringify(update)); }
-    function fetchMessages(otherUserId) { fetch(`/api/messages?userId=${otherUserId}`, { headers: { 'Authorization': `Bearer ${token}` }}) .then(response => response.json()) .then(messages => { document.getElementById('messages').innerHTML = ''; const unreadMessageIds = []; messages.forEach(msg => { const type = msg.senderId === currentUserId ? 'sent' : 'received'; displayMessage(msg, type); if (type === 'received' && msg.status !== 'READ') { unreadMessageIds.push(msg.id); } }); if (unreadMessageIds.length > 0) { sendBulkStatusUpdate(unreadMessageIds, 'READ', otherUserId); } }); }
-    function displayMessage(msg, type) { const messagesDiv = document.getElementById('messages'); const messageEle = document.createElement('div'); messageEle.className = `message ${type}`; messageEle.id = `msg-${msg.id}`; let statusTickHtml = ''; if (type === 'sent') { statusTickHtml = `<span class="msg-status" id="status-${msg.id}"></span>`; } messageEle.innerHTML = `${msg.content} ${statusTickHtml}`; messagesDiv.appendChild(messageEle); updateMessageStatusTick(msg.id, msg.status); messagesDiv.scrollTop = messagesDiv.scrollHeight; }
-    function updateMessageStatusTick(messageId, status) { const statusEl = document.getElementById(`status-${messageId}`); if (!statusEl) return; let tick = ''; if (status === 'UNSENT') tick = '🕒'; if (status === 'SENT') tick = '✓'; if (status === 'DELIVERED') tick = '✓✓'; if (status === 'READ') tick = '✓✓<span class="tick-read">✓</span>'; statusEl.innerHTML = tick; }
     function syncContacts() { const numbers = document.getElementById('contact-numbers').value.split('\n').filter(n => n); fetch('/api/contacts/sync', { method: 'POST', headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ contacts: numbers }) }) .then(response => response.json()) .then(contacts => { const list = document.getElementById('contacts-list'); list.innerHTML = ''; contacts.forEach(contact => { const currentStatus = contactStatusCache[contact.userId] || 'OFFLINE'; const statusColor = currentStatus === 'ONLINE' ? 'green' : '#888'; const item = document.createElement('li'); item.dataset.id = contact.userId; item.dataset.name = contact.displayName; item.innerHTML = `${contact.displayName} (${contact.mobileNumber}) <span class="status" id="contact-status-${contact.userId}" style="color: ${statusColor};">${currentStatus}</span>`; item.onclick = () => selectContactToChat(contact.userId, contact.displayName); list.appendChild(item); }); }); }
     function processPresenceUpdate(statusUpdate) { log(`Presence: User ${statusUpdate.userId} is ${statusUpdate.status}`); contactStatusCache[statusUpdate.userId] = statusUpdate.status; updateContactStatus(statusUpdate.userId, statusUpdate.status); }
     function updateContactStatus(userId, status) { const statusElement = document.getElementById(`contact-status-${userId}`); if (statusElement) { statusElement.innerText = status; statusElement.style.color = status === 'ONLINE' ? 'green' : '#888'; } }
